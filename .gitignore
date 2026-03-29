@@ -1,0 +1,23 @@
+node_modules/
+dist/
+dist-electron/
+release/
+.vite/
+coverage/
+*.log
+*.tmp
+*.temp
+Thumbs.db
+Desktop.ini
+
+# Local app/runtime state
+crash-reports/
+*.sqlite
+*.sqlite-journal
+*.db
+*.db-journal
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

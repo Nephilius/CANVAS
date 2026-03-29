@@ -1,0 +1,5 @@
+{
+  "provider": "generic",
+  "url": "https://your-update-host.example.com/canvas-studio/",
+  "channel": "latest"
+}

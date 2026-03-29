@@ -1,0 +1,93 @@
+{
+  "name": "canvas-studio",
+  "version": "0.1.5",
+  "private": true,
+  "description": "A Milanote + PureRef inspired creative board app for Windows.",
+  "main": "dist-electron/electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "concurrently -k \"npm:dev:electron:build\" \"npm:dev:electron:run\"",
+    "dev:electron:build": "tsc -p electron/tsconfig.json --watch --preserveWatchOutput",
+    "dev:electron:run": "wait-on tcp:5173 file:dist-electron/electron/main.js && electron .",
+    "build": "npm run build:renderer && npm run build:electron",
+    "build:renderer": "vite build && node scripts/fix-renderer-paths.mjs",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "create:patch": "node scripts/create-patch.mjs",
+    "pack": "npm run build && electron-builder --dir",
+    "dist:portable": "npm run build && electron-builder --win portable",
+    "dist:win": "npm run dist:portable",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "electron",
+    "react",
+    "creative-board",
+    "moodboard"
+  ],
+  "author": "",
+  "license": "MIT",
+  "build": {
+    "appId": "com.canvasstudio.app",
+    "productName": "Canvas Studio",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "dist-electron/electron/main.js"
+    },
+    "portable": {
+      "artifactName": "Canvas-Studio-Portable-${version}.${ext}"
+    },
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "clsx": "^2.1.1",
+    "electron-updater": "^6.6.2",
+    "nanoid": "^5.1.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "sql.js": "^1.13.0",
+    "zod": "^4.1.12",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/adm-zip": "^0.5.8",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.11",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "electron": "^41.1.0",
+    "electron-builder": "^26.8.1",
+    "jsdom": "^29.0.1",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.3",
+    "vitest": "^4.1.2",
+    "wait-on": "^9.0.4"
+  }
+}
