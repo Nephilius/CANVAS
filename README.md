@@ -95,7 +95,7 @@ Additional asset support:
 - Undo / redo command history
 - Multi-window support
 - Manual `.zip` patch installer
-- Portable Windows build output
+- Portable and installer Windows build outputs
 
 ## Tech Stack
 
@@ -155,6 +155,8 @@ npm test
 npm run build
 npm run pack
 npm run dist:portable
+npm run dist:installer
+npm run dist:release
 npm run create:patch -- 0.1.6
 ```
 
@@ -164,14 +166,18 @@ Portable release output:
 
 - `release/Canvas-Studio-Portable-0.1.6.exe`
 
+Installer release output:
+
+- `release/Canvas-Studio-Setup-0.1.6.exe`
+
 Patch outputs:
 
 - `release/patches/<version>/`
 
 GitHub distribution:
 
-- Attach `Canvas-Studio-Portable-<version>.exe` to GitHub Releases so other users can download the portable build directly
-- The repo now includes a GitHub Actions workflow for building and uploading the portable artifact on release tags
+- Attach both `Canvas-Studio-Portable-<version>.exe` and `Canvas-Studio-Setup-<version>.exe` to GitHub Releases
+- The repo includes a GitHub Actions workflow for building and uploading both Windows artifacts on release tags
 
 ## Git Readiness
 

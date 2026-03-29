@@ -17,9 +17,11 @@
     "build:renderer": "vite build && node scripts/fix-renderer-paths.mjs",
     "build:electron": "tsc -p electron/tsconfig.json",
     "create:patch": "node scripts/create-patch.mjs",
-    "pack": "npm run build && electron-builder --dir",
-    "dist:portable": "npm run build && electron-builder --win portable",
-    "dist:win": "npm run dist:portable",
+    "pack": "npm run build && electron-builder --dir --publish never",
+    "dist:portable": "npm run build && electron-builder --win portable --publish never",
+    "dist:installer": "npm run build && electron-builder --win nsis --publish never",
+    "dist:release": "npm run build && electron-builder --win portable nsis --publish never",
+    "dist:win": "npm run dist:release",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -60,12 +62,24 @@
     "portable": {
       "artifactName": "Canvas-Studio-Portable-${version}.${ext}"
     },
+    "nsis": {
+      "artifactName": "Canvas-Studio-Setup-${version}.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
     "win": {
       "icon": "build/icons/icon.png",
       "signAndEditExecutable": false,
       "target": [
         {
           "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
           "arch": [
             "x64"
           ]

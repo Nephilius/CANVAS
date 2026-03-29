@@ -1,4 +1,4 @@
-name: Release Portable Build
+name: Release Windows Builds
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  build-portable:
+  build-windows:
     runs-on: windows-latest
 
     steps:
@@ -29,16 +29,20 @@ jobs:
       - name: Generate icons
         run: npm run generate:icons
 
-      - name: Build portable
-        run: npm run dist:portable
+      - name: Build portable and installer
+        run: npm run dist:release
 
-      - name: Upload portable artifact
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: canvas-studio-portable
-          path: release/Canvas-Studio-Portable-*.exe
+          name: canvas-studio-windows
+          path: |
+            release/Canvas-Studio-Portable-*.exe
+            release/Canvas-Studio-Setup-*.exe
 
       - name: Attach to GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: release/Canvas-Studio-Portable-*.exe
+          files: |
+            release/Canvas-Studio-Portable-*.exe
+            release/Canvas-Studio-Setup-*.exe
