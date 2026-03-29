@@ -1,5 +1,7 @@
 # Canvas Studio
 
+I made this because I was tired of juggling 5 different tools just to manage references. Canvas Studio is a focused desktop app where you can drop images, organize ideas, grab colors, and keep a floating reference on screen while you work. It is still a work in progress, but already meant to be useful. Made by Nephilius, free for everyone.
+
 Canvas Studio is a premium desktop visual thinking system for illustrators, concept artists, art directors, thumbnail designers, and visual researchers. It combines freeform infinite boards, fast reference ingestion, color intelligence, session-based organization, and floating overlay reference viewing into one focused Windows app.
 
 This is not a painting app and not a Photoshop alternative. It is built to help creative teams collect references quickly, compare directions visually, organize moodboards spatially, extract useful palettes, annotate intent, and keep creative thinking moving without friction.
