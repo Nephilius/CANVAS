@@ -130,13 +130,13 @@ M:\CANVAS
 
 Useful docs:
 
-- [Product Description](M:\CANVAS\docs\product-description.md)
-- [Feature List](M:\CANVAS\docs\feature-list.md)
-- [Repository Guide](M:\CANVAS\docs\repository-guide.md)
-- [Architecture Blueprint](M:\CANVAS\docs\architecture.md)
-- [Patch Format](M:\CANVAS\docs\patch-format.md)
-- [Changelog](M:\CANVAS\CHANGELOG.md)
-- [Release Notes Index](M:\CANVAS\docs\release-notes\README.md)
+- [Product Description](./docs/product-description.md)
+- [Feature List](./docs/feature-list.md)
+- [Repository Guide](./docs/repository-guide.md)
+- [Architecture Blueprint](./docs/architecture.md)
+- [Patch Format](./docs/patch-format.md)
+- [Changelog](./CHANGELOG.md)
+- [Release Notes Index](./docs/release-notes/README.md)
 
 ## Development
 
