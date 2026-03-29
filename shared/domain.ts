@@ -7,7 +7,8 @@ export type ItemType =
   | "swatch"
   | "frame"
   | "pdf"
-  | "link";
+  | "link"
+  | "connector";
 
 export type AssetImportMode = "copy" | "link";
 
@@ -146,6 +147,14 @@ export interface LinkItem extends BaseItem {
   };
 }
 
+export interface ConnectorItem extends BaseItem {
+  type: "connector";
+  content: {
+    fromItemId: string;
+    toItemId: string;
+  };
+}
+
 export type Item =
   | ImageItem
   | NoteItem
@@ -153,7 +162,8 @@ export type Item =
   | SwatchItem
   | FrameItem
   | PdfItem
-  | LinkItem;
+  | LinkItem
+  | ConnectorItem;
 
 export interface Asset {
   id: string;
@@ -170,12 +180,31 @@ export interface Asset {
   updatedAt: string;
 }
 
+export interface StrokePoint {
+  x: number;
+  y: number;
+  pressure?: number;
+}
+
+export interface SketchStroke {
+  id: string;
+  boardId: string;
+  points: StrokePoint[];
+  color: string;
+  size: number;
+  opacity: number;
+  smoothing: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppSnapshot {
   schemaVersion: number;
   workspaces: Workspace[];
   projects: Project[];
   boards: Board[];
   items: Item[];
+  strokes: SketchStroke[];
   assets: Asset[];
   activeWorkspaceId: string;
   activeProjectId: string;
@@ -183,7 +212,7 @@ export interface AppSnapshot {
   lastOpenedBoardId: string;
 }
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 4;
 
 export const DEFAULT_WORKSPACE_SETTINGS: WorkspaceSettings = {
   theme: "obsidian",
@@ -362,10 +391,46 @@ export const createLinkItem = (
   content: { url, label }
 });
 
+export const createConnectorItem = (
+  boardId: string,
+  fromItemId: string,
+  toItemId: string,
+  zIndex = 1
+): ConnectorItem => ({
+  ...createBaseItem(boardId, "connector", 0, 0, 0, 0, zIndex),
+  content: { fromItemId, toItemId },
+  style: {
+    strokeColor: "#D5B66F"
+  },
+  opacity: 0.92
+});
+
 export const touchUpdatedAt = <T extends { updatedAt: string }>(entity: T): T => ({
   ...entity,
   updatedAt: nowIso()
 });
+
+export const createSketchStroke = (
+  boardId: string,
+  points: StrokePoint[],
+  color: string,
+  size: number,
+  opacity: number,
+  smoothing: number
+): SketchStroke => {
+  const now = nowIso();
+  return {
+    id: makeId("stroke"),
+    boardId,
+    points,
+    color,
+    size,
+    opacity,
+    smoothing,
+    createdAt: now,
+    updatedAt: now
+  };
+};
 
 export const createInitialSnapshot = (): AppSnapshot => {
   const workspace = createDefaultWorkspace();
@@ -388,6 +453,7 @@ export const createInitialSnapshot = (): AppSnapshot => {
       ),
       createSwatchItem(board.id, "#D5B66F", "Warm Gold", 120, -120)
     ],
+    strokes: [],
     assets: [],
     activeWorkspaceId: workspace.id,
     activeProjectId: project.id,

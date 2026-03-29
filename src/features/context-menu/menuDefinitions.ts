@@ -13,6 +13,13 @@ export type ContextMenuActionId =
   | "bring-forward"
   | "send-backward"
   | "toggle-lock"
+  | "set-color-neutral"
+  | "set-color-gold"
+  | "set-color-blue"
+  | "set-color-emerald"
+  | "set-color-rose"
+  | "set-color-violet"
+  | "set-color-charcoal"
   | "focus-overlay"
   | "extract-base-palette"
   | "extract-all-8"
@@ -37,7 +44,7 @@ export const buildBoardContextMenu = (): ContextMenuEntry[] => [
 
 export const buildItemContextMenu = (item: Item): ContextMenuEntry[] => {
   const common: ContextMenuEntry[] = [
-    { id: "rename", label: "Rename" },
+    ...(item.type === "connector" ? [] : ([{ id: "rename", label: "Rename" }] as ContextMenuEntry[])),
     { id: "duplicate", label: "Duplicate" },
     { id: "delete", label: "Delete" },
     { id: "bring-forward", label: "Bring Forward" },
@@ -45,8 +52,42 @@ export const buildItemContextMenu = (item: Item): ContextMenuEntry[] => {
     { id: "toggle-lock", label: item.locked ? "Unlock" : "Lock" }
   ];
 
+  if (item.type === "connector") {
+    return [
+      ...common,
+      {
+        id: "set-color-neutral",
+        label: "Change String Color",
+        children: [
+          { id: "set-color-neutral", label: "Neutral" },
+          { id: "set-color-gold", label: "Gold" },
+          { id: "set-color-blue", label: "Blue" },
+          { id: "set-color-emerald", label: "Emerald" },
+          { id: "set-color-rose", label: "Rose" },
+          { id: "set-color-violet", label: "Violet" },
+          { id: "set-color-charcoal", label: "Charcoal" }
+        ]
+      }
+    ];
+  }
+
   if (item.type !== "image") {
-    return common;
+    return [
+      ...common,
+      {
+        id: "set-color-neutral",
+        label: "Change Color",
+        children: [
+          { id: "set-color-neutral", label: "Neutral" },
+          { id: "set-color-gold", label: "Gold" },
+          { id: "set-color-blue", label: "Blue" },
+          { id: "set-color-emerald", label: "Emerald" },
+          { id: "set-color-rose", label: "Rose" },
+          { id: "set-color-violet", label: "Violet" },
+          { id: "set-color-charcoal", label: "Charcoal" }
+        ]
+      }
+    ];
   }
 
   return [

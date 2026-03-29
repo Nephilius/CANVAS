@@ -26,8 +26,10 @@ import {
   selectActiveWorkspace,
   selectAssetsById,
   selectBoardItems,
+  selectBoardStrokes,
   useAppStore
 } from "../state/useAppStore";
+import { screenToBoard } from "../features/boards/geometry";
 
 const getItemRenameValue = (item: Item | null) => {
   if (!item) return "";
@@ -67,18 +69,23 @@ export const App = () => {
     selectItems,
     createBoard,
     createSessionProject,
+    clearSession,
     setActiveProject,
     setActiveBoard,
     updateBoardViewport,
     addQuickItem,
     addImportedContent,
+    addConnector,
+    addStroke,
     replaceAssetReference,
     moveSelectedItems,
     applyLiveSelectionDelta,
     applyLiveItemBounds,
     pushHistoryEntry,
+    updateItemText,
     updateSelectedText,
     updateSelectedMetadata,
+    updateSelectedStyle,
     updateSelectedOpacity,
     updateSelectedDimensions,
     renameSelection,
@@ -99,6 +106,7 @@ export const App = () => {
   const activeProject = selectActiveProject(snapshot);
   const activeBoard = selectActiveBoard(snapshot);
   const boardItems = selectBoardItems(snapshot, activeBoard.id);
+  const boardStrokes = selectBoardStrokes(snapshot, activeBoard.id);
   const assetsById = selectAssetsById(snapshot);
   const selectedItem = snapshot.items.find((item) => selectedItemIds.includes(item.id)) ?? null;
   const autosaveTimeout = useRef<number | null>(null);
@@ -114,7 +122,15 @@ export const App = () => {
     percent: 0,
     message: "Select a patch to begin."
   });
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
   const [importNotice, setImportNotice] = useState("Ready");
+  const [drawMode, setDrawMode] = useState(false);
+  const [connectorSourceItemId, setConnectorSourceItemId] = useState<string | null>(null);
+  const [drawColor, setDrawColor] = useState("#f3f5f7");
+  const [drawSize, setDrawSize] = useState(5);
+  const [drawSmoothing, setDrawSmoothing] = useState(0.7);
+  const [clearSessionOpen, setClearSessionOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<
     | {
@@ -132,6 +148,23 @@ export const App = () => {
     status: "idle",
     message: "Select a .zip patch package to begin validation."
   });
+
+  const getVisibleBoardOrigin = () => {
+    const frame = boardFrameRef.current?.getBoundingClientRect();
+    if (!frame) {
+      return { x: 0, y: 0 };
+    }
+
+    const center = screenToBoard(
+      { x: frame.width / 2, y: frame.height / 2 },
+      activeBoard.viewport
+    );
+
+    return {
+      x: center.x - 180,
+      y: center.y - 120
+    };
+  };
 
   useEffect(() => {
     if (!bridgeReady) return;
@@ -183,32 +216,82 @@ export const App = () => {
   }, [activeWorkspace.settings.autosaveMs, markError, markSaved, markSaving, snapshot, ui.saveState]);
 
   const handleImportAt = async (paths: string[], origin: { x: number; y: number }) => {
-    const result = await window.appApi.importFiles(paths);
-    const { assets, items } = createItemsFromImportedAssets(
-      activeBoard.id,
-      result.imported,
-      snapshot.assets,
-      origin
-    );
-    if (items.length) {
-      addImportedContent(assets, items);
-      setImportNotice(
-        result.rejected.length
-          ? `Imported ${items.length} item(s). Skipped ${result.rejected.length} unsupported file(s).`
-          : `Imported ${items.length} item(s).`
+    try {
+      const result = await window.appApi.importFiles(paths);
+      const { assets, items } = createItemsFromImportedAssets(
+        activeBoard.id,
+        result.imported,
+        snapshot.assets,
+        origin
       );
-    } else {
+      if (items.length) {
+        addImportedContent(assets, items);
+        setImportNotice(
+          result.rejected.length
+            ? `Imported ${items.length} item(s). Skipped ${result.rejected.length} unsupported file(s).`
+            : `Imported ${items.length} item(s).`
+        );
+      } else {
+        setImportNotice(
+          result.rejected[0]?.reason ??
+            "No supported files found. Supported: PNG, JPG, WEBP, GIF, BMP, SVG, ICO, PDF."
+        );
+      }
+    } catch (error) {
+      console.error("Failed to import files", error);
       setImportNotice(
-        result.rejected[0]?.reason ??
-          "No supported files found. Supported: PNG, JPG, WEBP, GIF, BMP, SVG, ICO, PDF."
+        error instanceof Error ? `Import failed: ${error.message}` : "Import failed."
       );
     }
   };
 
-  const handleImportDialog = async (origin = { x: 0, y: 0 }) => {
-    const paths = await window.appApi.openImportDialog();
-    if (!paths.length) return;
-    await handleImportAt(paths, origin);
+  const handleImportDialog = async (origin = getVisibleBoardOrigin()) => {
+    try {
+      const paths = await window.appApi.openImportDialog();
+      if (!paths.length) {
+        setImportNotice("Import cancelled.");
+        return;
+      }
+      await handleImportAt(paths, origin);
+    } catch (error) {
+      console.error("Failed to open import dialog", error);
+      setImportNotice(
+        error instanceof Error ? `Import dialog failed: ${error.message}` : "Import dialog failed."
+      );
+    }
+  };
+
+  const handleSaveSessionFile = async () => {
+    try {
+      const result = await window.appApi.saveSessionFile(snapshot);
+      if (!result.filePath) {
+        setImportNotice("Save cancelled.");
+        return;
+      }
+      setImportNotice(`Saved session to ${result.filePath.split(/[/\\]/).at(-1) ?? "session file"}.`);
+    } catch (error) {
+      console.error("Failed to save session file", error);
+      setImportNotice(
+        error instanceof Error ? `Save failed: ${error.message}` : "Save failed."
+      );
+    }
+  };
+
+  const handleOpenSessionFile = async () => {
+    try {
+      const result = await window.appApi.openSessionFile();
+      if (!result) {
+        setImportNotice("Open cancelled.");
+        return;
+      }
+      bootstrap(result.snapshot);
+      setImportNotice(`Opened session ${result.filePath.split(/[/\\]/).at(-1) ?? "session file"}.`);
+    } catch (error) {
+      console.error("Failed to open session file", error);
+      setImportNotice(
+        error instanceof Error ? `Open failed: ${error.message}` : "Open failed."
+      );
+    }
   };
 
   const handleRelinkAsset = async (assetId: string) => {
@@ -220,6 +303,15 @@ export const App = () => {
       replaceAssetReference(assetId, replacement);
       setImportNotice("Asset relinked.");
     }
+  };
+
+  const handleConfirmClearSession = () => {
+    clearSession();
+    setDrawMode(false);
+    setConnectorSourceItemId(null);
+    setContextMenu({ open: false });
+    setClearSessionOpen(false);
+    setImportNotice("Session cleared. Started fresh.");
   };
 
   const handleSelectPatch = async () => {
@@ -355,6 +447,30 @@ export const App = () => {
       case "toggle-lock":
         toggleSelectionLock();
         return;
+      case "set-color-neutral":
+      case "set-color-gold":
+      case "set-color-blue":
+      case "set-color-emerald":
+      case "set-color-rose":
+      case "set-color-violet":
+      case "set-color-charcoal": {
+        const colorThemes: Record<string, { fillColor: string; textColor: string }> = {
+          "set-color-neutral": { fillColor: "#1b1f25", textColor: "#f4f7fb" },
+          "set-color-gold": { fillColor: "#6f5a24", textColor: "#fff6dc" },
+          "set-color-blue": { fillColor: "#243e67", textColor: "#ecf4ff" },
+          "set-color-emerald": { fillColor: "#1f5846", textColor: "#e6fff4" },
+          "set-color-rose": { fillColor: "#6a3044", textColor: "#ffeef5" },
+          "set-color-violet": { fillColor: "#4f3978", textColor: "#f3ecff" },
+          "set-color-charcoal": { fillColor: "#14181d", textColor: "#f3f5f7" }
+        };
+        const theme = colorThemes[actionId];
+        updateSelectedStyle(
+          selectedItem?.type === "connector"
+            ? { strokeColor: theme.fillColor }
+            : { fillColor: theme.fillColor, textColor: theme.textColor }
+        );
+        return;
+      }
       case "focus-overlay":
         if (!menuItem || menuItem.type !== "image") return;
         {
@@ -396,9 +512,24 @@ export const App = () => {
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
         createSessionProject();
+      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "x") {
+        event.preventDefault();
+        setClearSessionOpen(true);
+      } else if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        setDrawMode((value) => !value);
+      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void handleSaveSessionFile();
+      } else if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        void handleOpenSessionFile();
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         updatePalette({ paletteOpen: true });
+      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        void window.appApi.openNewWindow();
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
         updatePalette({ paletteOpen: true });
@@ -438,6 +569,7 @@ export const App = () => {
       } else if (event.key === "ArrowRight") {
         moveSelectedItems({ x: event.shiftKey ? 10 : 1, y: 0 });
       } else if (event.key === "Escape") {
+        setConnectorSourceItemId(null);
         setContextMenu({ open: false });
       } else if (event.key === "?") {
         toggleHelp(true);
@@ -486,6 +618,7 @@ export const App = () => {
     deleteSelection,
     duplicateSelection,
     fitActiveBoardToContent,
+    bootstrap,
     markError,
     markSaved,
     markSaving,
@@ -500,7 +633,30 @@ export const App = () => {
   const paletteActions = useMemo<PaletteAction[]>(
     () => [
       { id: "new-session", title: "New session", hint: "Project", run: createSessionProject },
+      { id: "clear-session", title: "Clear current session", hint: "Warning", run: () => setClearSessionOpen(true) },
+      { id: "open-session", title: "Open session file", hint: "File", run: () => void handleOpenSessionFile() },
+      { id: "save-session", title: "Save session file", hint: "File", run: () => void handleSaveSessionFile() },
+      { id: "toggle-draw", title: drawMode ? "Exit draw mode" : "Enter draw mode", hint: "Sketch", run: () => setDrawMode((value) => !value) },
+      { id: "new-window", title: "Open new window", hint: "Window", run: () => void window.appApi.openNewWindow() },
       { id: "new-board", title: "New board", hint: "Create", run: createBoard },
+      {
+        id: "connector-mode",
+        title: connectorSourceItemId ? "Cancel connector mode" : "Start connector mode",
+        hint: "Connect",
+        run: () => {
+          if (connectorSourceItemId) {
+            setConnectorSourceItemId(null);
+            setImportNotice("Connector mode cancelled.");
+            return;
+          }
+          if (!selectedItem || selectedItem.type === "connector") {
+            setImportNotice("Select a frame or reference first, then start Connector mode.");
+            return;
+          }
+          setConnectorSourceItemId(selectedItem.id);
+          setImportNotice("Connector mode active. Click another frame or reference to link it.");
+        }
+      },
       { id: "new-note", title: "New note", hint: "Quick add", run: () => addQuickItem("note", { x: -120, y: -80 }) },
       { id: "new-sticky", title: "New sticky", hint: "Quick add", run: () => addQuickItem("sticky", { x: -120, y: -80 }) },
       { id: "import", title: "Import files", hint: "Assets", run: () => void handleImportDialog() },
@@ -516,7 +672,17 @@ export const App = () => {
       { id: "settings", title: "Show settings", hint: "Preferences", run: () => toggleSettings(true) },
       { id: "help", title: "Show shortcuts", hint: "Help", run: () => toggleHelp(true) }
     ],
-    [addQuickItem, createBoard, createSessionProject, fitActiveBoardToContent, toggleHelp, toggleSettings]
+    [
+      addQuickItem,
+      connectorSourceItemId,
+      createBoard,
+      createSessionProject,
+      drawMode,
+      fitActiveBoardToContent,
+      selectedItem,
+      toggleHelp,
+      toggleSettings
+    ]
   );
 
   const contextMenuItems =
@@ -525,7 +691,11 @@ export const App = () => {
       : buildBoardContextMenu();
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell${leftRailCollapsed ? " app-shell-left-collapsed" : ""}${
+        rightRailCollapsed ? " app-shell-right-collapsed" : ""
+      }`}
+    >
       <Sidebar
         workspace={activeWorkspace}
         project={activeProject}
@@ -538,6 +708,8 @@ export const App = () => {
         onSelectBoard={setActiveBoard}
         onCreateBoard={createBoard}
         onCreateSession={createSessionProject}
+        collapsed={leftRailCollapsed}
+        onToggleCollapsed={() => setLeftRailCollapsed((value) => !value)}
       />
 
       <main className="workspace-shell">
@@ -545,10 +717,36 @@ export const App = () => {
           projectTitle={activeProject.title}
           boardTitle={activeBoard.title}
           onQuickAdd={(kind) => addQuickItem(kind, { x: -120, y: -80 })}
+          onOpenSession={() => void handleOpenSessionFile()}
+          onSaveSession={() => void handleSaveSessionFile()}
           onImport={() => void handleImportDialog()}
+          onToggleConnectorMode={() => {
+            if (connectorSourceItemId) {
+              setConnectorSourceItemId(null);
+              setImportNotice("Connector mode cancelled.");
+              return;
+            }
+            if (!selectedItem || selectedItem.type === "connector") {
+              setImportNotice("Select a frame or reference first, then start Connector mode.");
+              return;
+            }
+            setConnectorSourceItemId(selectedItem.id);
+            setImportNotice("Connector mode active. Click another frame or reference to link it.");
+          }}
+          onOpenNewWindow={() => void window.appApi.openNewWindow()}
           onOpenPalette={() => updatePalette({ paletteOpen: true })}
           onOpenSettings={() => toggleSettings(true)}
           onNewSession={createSessionProject}
+          onClearSession={() => setClearSessionOpen(true)}
+          drawMode={drawMode}
+          connectorMode={Boolean(connectorSourceItemId)}
+          drawColor={drawColor}
+          drawSize={drawSize}
+          drawSmoothing={drawSmoothing}
+          onToggleDrawMode={() => setDrawMode((value) => !value)}
+          onDrawColorChange={setDrawColor}
+          onDrawSizeChange={setDrawSize}
+          onDrawSmoothingChange={setDrawSmoothing}
         />
         <div className="board-frame" ref={boardFrameRef}>
           <BoardCanvas
@@ -556,15 +754,28 @@ export const App = () => {
             board={{ ...activeBoard, showGrid: activeWorkspace.settings.showGrid }}
             settings={activeWorkspace.settings}
             items={boardItems}
+            strokes={boardStrokes}
             assetsById={assetsById}
             selectedItemIds={selectedItemIds}
+            drawMode={drawMode}
+            drawColor={drawColor}
+            drawSize={drawSize}
+            drawSmoothing={drawSmoothing}
             onSelectItems={selectItems}
             onViewportChange={(viewport) => updateBoardViewport(activeBoard.id, viewport)}
             onApplyLiveSelectionDelta={applyLiveSelectionDelta}
             onApplyLiveItemBounds={applyLiveItemBounds}
             onCommitInteraction={pushHistoryEntry}
+            onUpdateItemText={updateItemText}
             onCreateNote={(position) => addQuickItem("note", position)}
-            onImportAt={(paths, position) => void handleImportAt(paths, position)}
+            connectorSourceItemId={connectorSourceItemId}
+            onCreateConnector={(fromItemId, toItemId) => {
+              addConnector(fromItemId, toItemId);
+              setConnectorSourceItemId(null);
+              setImportNotice("Connector added.");
+            }}
+            onCancelConnector={() => setConnectorSourceItemId(null)}
+            onAddStroke={addStroke}
             onOpenBoardContextMenu={(payload) =>
               setContextMenu({
                 open: true,
@@ -587,7 +798,13 @@ export const App = () => {
           selectionCount={selectedItemIds.length}
           saveState={ui.saveState}
           lastSavedAt={ui.lastSavedAt}
-          message={importNotice}
+          message={
+            connectorSourceItemId
+              ? "Connector mode active. Click another frame or reference to link it."
+              : drawMode
+                ? `Draw mode · ${drawSize}px · ${Math.round(drawSmoothing * 100)}% smooth`
+                : importNotice
+          }
           credit="Made by nephillius · free for others"
         />
       </main>
@@ -599,11 +816,14 @@ export const App = () => {
         settings={activeWorkspace.settings}
         onTextChange={updateSelectedText}
         onMetadataChange={updateSelectedMetadata}
+        onStyleChange={updateSelectedStyle}
         onOpacityChange={updateSelectedOpacity}
         onSizeChange={updateSelectedDimensions}
         onBoardChange={updateActiveBoard}
         onSettingsChange={updateWorkspaceSettings}
         onRelinkAsset={handleRelinkAsset}
+        collapsed={rightRailCollapsed}
+        onToggleCollapsed={() => setRightRailCollapsed((value) => !value)}
       />
 
       <CommandPalette
@@ -616,6 +836,25 @@ export const App = () => {
       />
 
       <HelpDialog open={ui.helpOpen} title="Shortcuts" onClose={() => toggleHelp(false)} />
+      {clearSessionOpen ? (
+        <div className="overlay-backdrop" onClick={() => setClearSessionOpen(false)}>
+          <div className="overlay-panel rename-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-label">Warning</div>
+            <h3>Clear current session?</h3>
+            <p className="feature-caption">
+              This will wipe the current in-app session and replace it with a fresh workspace. Saved session files are not deleted.
+            </p>
+            <div className="rename-actions">
+              <button type="button" className="ghost-button" onClick={() => setClearSessionOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="toolbar-button accent" onClick={handleConfirmClearSession}>
+                Clear Session
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <SettingsDialog
         open={ui.settingsOpen}
         version={appVersion}

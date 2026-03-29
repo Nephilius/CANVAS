@@ -1,12 +1,25 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { AppApi } from "../shared/ipc";
 
 const api: AppApi = {
   loadSnapshot: () => ipcRenderer.invoke("app:loadSnapshot"),
   saveSnapshot: (snapshot) => ipcRenderer.invoke("app:saveSnapshot", snapshot),
+  openNewWindow: () => ipcRenderer.invoke("app:openNewWindow"),
   importFiles: (paths) => ipcRenderer.invoke("app:importFiles", paths),
+  getPathsForDroppedFiles: (files) =>
+    files
+      .map((file) => {
+        try {
+          return webUtils.getPathForFile(file);
+        } catch {
+          return (file as File & { path?: string }).path ?? "";
+        }
+      })
+      .filter(Boolean),
   importClipboardImage: (input) => ipcRenderer.invoke("app:importClipboardImage", input),
   openImportDialog: () => ipcRenderer.invoke("app:openImportDialog"),
+  saveSessionFile: (snapshot) => ipcRenderer.invoke("app:saveSessionFile", snapshot),
+  openSessionFile: () => ipcRenderer.invoke("app:openSessionFile"),
   getAppVersion: () => ipcRenderer.invoke("app:getAppVersion"),
   getCrashReportsDirectory: () => ipcRenderer.invoke("app:getCrashReportsDirectory"),
   selectPatchFile: () => ipcRenderer.invoke("app:selectPatchFile"),

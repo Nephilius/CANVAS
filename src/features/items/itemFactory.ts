@@ -1,6 +1,7 @@
 import type { Asset, Item } from "../../../shared/domain";
 import {
   createChecklistItem,
+  createConnectorItem,
   createFrameItem,
   createImageItem,
   createLinkItem,
@@ -96,3 +97,10 @@ export const createSwatchPaletteItems = (
       origin.y + row * 156
     );
   });
+
+export const createConnectorBetweenItems = (
+  boardId: string,
+  fromItemId: string,
+  toItemId: string,
+  zIndex: number
+): Item => createConnectorItem(boardId, fromItemId, toItemId, zIndex);

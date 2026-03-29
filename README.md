@@ -1,20 +1,21 @@
 # Canvas Studio
 
-I made this because I was tired of juggling 5 different tools just to manage references. Canvas Studio is a focused desktop app where you can drop images, organize ideas, grab colors, and keep a floating reference on screen while you work. It is still a work in progress, but already meant to be useful. Made by Nephilius, free for everyone.
+Canvas Studio is a premium desktop visual thinking system for illustrators, concept artists, art directors, thumbnail designers, and visual researchers. It combines an infinite board, structured frames, quick sketching, color extraction, floating reference overlays, and session-based organization into one focused creative workspace.
 
-Canvas Studio is a premium desktop visual thinking system for illustrators, concept artists, art directors, thumbnail designers, and visual researchers. It combines freeform infinite boards, fast reference ingestion, color intelligence, session-based organization, and floating overlay reference viewing into one focused Windows app.
+It is not a painting app and not a Photoshop replacement. It is built to help artists collect references quickly, compare directions visually, connect ideas spatially, mark up boards fast, and keep visual thinking moving without friction.
 
-This is not a painting app and not a Photoshop alternative. It is built to help creative teams collect references quickly, compare directions visually, organize moodboards spatially, extract useful palettes, annotate intent, and keep creative thinking moving without friction.
+Made by Nephilius, free for everyone.
 
-## Product Description
+## Product Summary
 
 Canvas Studio acts like a creative intelligence workspace:
 
-- gather references from files, folders, drag-drop, and clipboard paste
-- arrange them on an infinite canvas with frames, notes, swatches, and structured groupings
+- gather references from files and clipboard paste
+- arrange them on an infinite canvas with frames, notes, swatches, sketches, and structured groupings
+- connect frames and references with curved visual strings
 - inspect color, mood, and composition faster with built-in palette extraction
 - keep a floating always-on-top image reference visible while working in other software
-- preserve project sessions cleanly so boards stay available when you return
+- preserve sessions cleanly so boards can be reopened later
 
 ## Current Features
 
@@ -24,17 +25,21 @@ Canvas Studio acts like a creative intelligence workspace:
 - Marquee selection and multi-select
 - Frame / section items for organizing ideas spatially
 - Notes, sticky notes, headers, checklist cards, swatches, PDFs, and image items
+- Connector strings between frames and references
 - Snap to grid and snap to nearby objects
 - Alignment guides during movement
-- Perspective grid overlays with 1-point, 2-point, and 3-point modes
+- Container-style frame transforms that move and scale contained items
 
 ### Reference Ingestion
 
-- Drag and drop from Windows Explorer
-- File picker import
+- File picker import with multi-file selection
 - Clipboard image paste
 - Bulk-friendly local asset caching
-- Stable asset metadata and preview persistence after restart
+- Stable preview rendering after restart
+
+Current note:
+
+- Drag-drop from Explorer is intentionally disabled in the current release while the packaged Electron drop path is being rebuilt for reliability
 
 Supported image formats end to end:
 
@@ -56,6 +61,15 @@ Additional asset support:
 - Expanded palette extraction with 8, 12, 16, or 24 colors
 - Real swatch items added to the board
 - Hex labels with contrast-aware text
+- Color-changing for non-image references and connector strings
+
+### Quick Draw
+
+- Board-level sketch layer
+- Mouse and pen input
+- Smooth anti-aliased strokes
+- Adjustable color, brush size, and smoothing
+- Undo / redo and persistence for completed strokes
 
 ### Overlay Workflow
 
@@ -71,15 +85,16 @@ Additional asset support:
 ### Sessions and Persistence
 
 - New Session flow creates a fresh project session in the current workspace
-- Autosave
-- Restore of structured local app state
+- Save session file and reopen it later
+- Autosave for in-app state
 - Crash report text files written to a dedicated crash-reports folder
 
 ### Desktop Utilities
 
 - Custom right-click menus on board, items, and image items
 - Undo / redo command history
-- Manual patch installer for `.zip` patch packages
+- Multi-window support
+- Manual `.zip` patch installer
 - Portable Windows build output
 
 ## Tech Stack
@@ -92,28 +107,28 @@ Additional asset support:
 - Vite
 - Vitest
 
-Electron is used here because the current workspace is already set up and shipping successfully with Windows-native filesystem, clipboard, patching, overlay windows, and packaging support.
+Electron is used here because the app needs Windows-native filesystem access, clipboard integration, floating overlay windows, portable packaging, and patching support in one desktop shell.
 
 ## Repository Layout
 
 ```text
 M:\CANVAS
-|- electron/      Main process, preload bridge, patching, storage, crash handling
-|- shared/        Shared types, IPC contracts, import rules
+|- electron/      Main process, preload bridge, storage, patching, overlay windows
+|- shared/        Shared domain types and IPC contracts
 |- src/
-|  |- app/        Shells and top-level app flows
-|  |- components/ Reusable UI pieces
-|  |- features/   Canvas, items, inspector, context menu, assets
-|  |- state/      Zustand app store and command history wiring
-|  |- styles/     Premium dark UI styling
+|  |- app/        Shells and top-level application flows
+|  |- components/ Shared UI building blocks
+|  |- features/   Canvas, items, inspector, context menu, assets, search
+|  |- state/      Zustand store and history wiring
+|  |- styles/     App styling
 |  |- utils/      Shared renderer utilities
-|- docs/          Product, architecture, patch, and repo notes
+|- docs/          Product notes, architecture, release notes, repo guidance
 |- scripts/       Build and release helpers
-|- tests/         Vitest coverage for geometry, history, imports, patch validation
-|- release/       Portable builds and versioned patches
+|- tests/         Vitest coverage
+|- release/       Portable builds and versioned patch packages
 ```
 
-More detail:
+Useful docs:
 
 - [Product Description](M:\CANVAS\docs\product-description.md)
 - [Feature List](M:\CANVAS\docs\feature-list.md)
@@ -121,6 +136,7 @@ More detail:
 - [Architecture Blueprint](M:\CANVAS\docs\architecture.md)
 - [Patch Format](M:\CANVAS\docs\patch-format.md)
 - [Changelog](M:\CANVAS\CHANGELOG.md)
+- [Release Notes Index](M:\CANVAS\docs\release-notes\README.md)
 
 ## Development
 
@@ -139,18 +155,23 @@ npm test
 npm run build
 npm run pack
 npm run dist:portable
-npm run create:patch -- 0.1.5
+npm run create:patch -- 0.1.6
 ```
 
 ## Releases
 
 Portable release output:
 
-- [Canvas-Studio-Portable-0.1.5.exe](M:\CANVAS\release\Canvas-Studio-Portable-0.1.5.exe)
+- `release/Canvas-Studio-Portable-0.1.6.exe`
 
-Latest patch output:
+Patch outputs:
 
-- [canvas-studio-patch-0.1.5.zip](M:\CANVAS\release\patches\0.1.5\canvas-studio-patch-0.1.5.zip)
+- `release/patches/<version>/`
+
+GitHub distribution:
+
+- Attach `Canvas-Studio-Portable-<version>.exe` to GitHub Releases so other users can download the portable build directly
+- The repo now includes a GitHub Actions workflow for building and uploading the portable artifact on release tags
 
 ## Git Readiness
 
@@ -159,8 +180,8 @@ The repo is prepared for git with:
 - `.gitignore` for dependencies, builds, runtime state, and release artifacts
 - `.gitattributes` for predictable line endings and binary handling
 - `.editorconfig` for consistent editor behavior
-- a lightweight docs structure so the project is understandable from the first commit
+- versioned release notes and a changelog for cleaner release history
 
 ## Status
 
-Canvas Studio is in active product build-out. The foundation is already usable and the codebase is structured so future work can extend the board, overlay, library, export, and intelligence systems without a rewrite.
+Canvas Studio is in active product build-out. The app is already usable, and the codebase is structured so future work can extend the board, overlay, library, export, and intelligence systems without a rewrite.

@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import type { AppSnapshot, Asset, Board, Item, WorkspaceSettings } from "../../shared/domain";
+import type { AppSnapshot, Asset, Board, Item, SketchStroke, WorkspaceSettings } from "../../shared/domain";
 import {
+  createSketchStroke,
   createDefaultBoard,
   createDefaultProject,
   createInitialSnapshot,
@@ -9,9 +10,11 @@ import {
 import { fitViewportToItems } from "../features/boards/geometry";
 import {
   createQuickItem,
+  createConnectorBetweenItems,
   createSwatchPaletteItems,
   duplicateItems
 } from "../features/items/itemFactory";
+import type { Rect } from "../features/boards/geometry";
 
 export interface HistoryEntry {
   label: string;
@@ -45,6 +48,7 @@ interface AppStore {
   pushHistoryEntry: (label: string, before: AppSnapshot) => void;
   createBoard: () => void;
   createSessionProject: () => void;
+  clearSession: () => void;
   setActiveProject: (projectId: string) => void;
   setActiveBoard: (boardId: string) => void;
   updateBoardViewport: (boardId: string, viewport: Board["viewport"], trackHistory?: boolean) => void;
@@ -53,6 +57,15 @@ interface AppStore {
     position: { x: number; y: number }
   ) => void;
   addImportedContent: (assets: Asset[], items: Item[]) => void;
+  addConnector: (fromItemId: string, toItemId: string) => void;
+  addStroke: (input: {
+    boardId: string;
+    points: SketchStroke["points"];
+    color: string;
+    size: number;
+    opacity: number;
+    smoothing: number;
+  }) => void;
   replaceAssetReference: (previousAssetId: string, nextAsset: Asset) => void;
   moveSelectedItems: (delta: { x: number; y: number }) => void;
   applyLiveSelectionDelta: (delta: { x: number; y: number }) => void;
@@ -61,7 +74,9 @@ interface AppStore {
     bounds: Partial<Pick<Item, "x" | "y" | "width" | "height">>
   ) => void;
   updateSelectedText: (value: string) => void;
+  updateItemText: (itemId: string, value: string) => void;
   updateSelectedMetadata: (metadata: Record<string, string | number | boolean | null>) => void;
+  updateSelectedStyle: (style: Record<string, string | number | boolean>) => void;
   updateSelectedOpacity: (opacity: number) => void;
   updateSelectedDimensions: (size: { width: number; height: number }) => void;
   renameSelection: (value: string) => void;
@@ -85,6 +100,71 @@ const cloneSnapshot = (snapshot: AppSnapshot): AppSnapshot => structuredClone(sn
 
 const patchBoard = (snapshot: AppSnapshot, boardId: string, updater: (board: Board) => Board) => {
   snapshot.boards = snapshot.boards.map((board) => (board.id === boardId ? updater(board) : board));
+};
+
+const FRAME_HEADER_OFFSET = 44;
+
+const getFrameChildren = (items: Item[], frame: Item) =>
+  items.filter(
+    (candidate) =>
+      candidate.type !== "connector" &&
+      candidate.id !== frame.id &&
+      candidate.boardId === frame.boardId &&
+      candidate.x >= frame.x &&
+      candidate.y >= frame.y + FRAME_HEADER_OFFSET &&
+      candidate.x + candidate.width <= frame.x + frame.width &&
+      candidate.y + candidate.height <= frame.y + frame.height
+  );
+
+const moveFrameChildrenByDelta = (
+  items: Item[],
+  frame: Item,
+  delta: { x: number; y: number },
+  selectedIds: string[]
+) => {
+  const childIds = new Set(
+    getFrameChildren(items, frame)
+      .filter((child) => !selectedIds.includes(child.id))
+      .map((child) => child.id)
+  );
+
+  if (!childIds.size) return items;
+
+  const now = new Date().toISOString();
+  return items.map((item) =>
+    childIds.has(item.id)
+      ? { ...item, x: item.x + delta.x, y: item.y + delta.y, updatedAt: now }
+      : item
+  );
+};
+
+const scaleFrameChildren = (
+  items: Item[],
+  frame: Item,
+  nextFrame: Rect
+) => {
+  const children = getFrameChildren(items, frame);
+  if (!children.length) return items;
+
+  const scaleX = nextFrame.width / frame.width;
+  const scaleY = nextFrame.height / frame.height;
+  const now = new Date().toISOString();
+  const childIds = new Set(children.map((child) => child.id));
+
+  return items.map((item) => {
+    if (!childIds.has(item.id)) return item;
+    const relativeX = item.x - frame.x;
+    const relativeY = item.y - frame.y;
+
+    return {
+      ...item,
+      x: nextFrame.x + relativeX * scaleX,
+      y: nextFrame.y + relativeY * scaleY,
+      width: Math.max(24, item.width * scaleX),
+      height: Math.max(24, item.height * scaleY),
+      updatedAt: now
+    };
+  });
 };
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -159,6 +239,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     });
     set({ selectedItemIds: [] });
   },
+  clearSession: () =>
+    set((state) => ({
+      snapshot: createInitialSnapshot(),
+      selectedItemIds: [],
+      history: { undo: [], redo: [] },
+      ui: { ...state.ui, saveState: "dirty" }
+    })),
   setActiveProject: (projectId) =>
     set((state) => {
       const firstBoard =
@@ -208,6 +295,40 @@ export const useAppStore = create<AppStore>((set, get) => ({
     });
     set({ selectedItemIds: items.map((item) => item.id) });
   },
+  addConnector: (fromItemId, toItemId) => {
+    const snapshot = get().snapshot;
+    const fromItem = snapshot.items.find((item) => item.id === fromItemId);
+    const toItem = snapshot.items.find((item) => item.id === toItemId);
+    if (
+      !fromItem ||
+      !toItem ||
+      fromItem.boardId !== toItem.boardId ||
+      fromItem.type === "connector" ||
+      toItem.type === "connector" ||
+      fromItem.id === toItem.id
+    ) {
+      return;
+    }
+
+    const duplicate = snapshot.items.find(
+      (item) =>
+        item.type === "connector" &&
+        ((item.content.fromItemId === fromItemId && item.content.toItemId === toItemId) ||
+          (item.content.fromItemId === toItemId && item.content.toItemId === fromItemId))
+    );
+    if (duplicate) return;
+
+    get().commitMutation("Create connector", (draft) => {
+      const topZ = Math.max(0, ...draft.items.map((item) => item.zIndex));
+      draft.items.push(createConnectorBetweenItems(fromItem.boardId, fromItemId, toItemId, topZ + 1));
+    });
+  },
+  addStroke: ({ boardId, points, color, size, opacity, smoothing }) => {
+    if (points.length < 2) return;
+    get().commitMutation("Draw stroke", (draft) => {
+      draft.strokes.push(createSketchStroke(boardId, points, color, size, opacity, smoothing));
+    });
+  },
   replaceAssetReference: (previousAssetId, nextAsset) =>
     get().commitMutation("Relink asset", (draft) => {
       draft.assets = [...draft.assets.filter((asset) => asset.id !== previousAssetId), nextAsset];
@@ -238,11 +359,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const selection = get().selectedItemIds;
     if (!selection.length) return;
     get().commitMutation("Move selection", (draft) => {
-      draft.items = draft.items.map((item) =>
+      const originalFrame =
+        selection.length === 1
+          ? draft.items.find((item) => item.id === selection[0] && item.type === "frame") ?? null
+          : null;
+      let nextItems = draft.items.map((item) =>
         selection.includes(item.id)
           ? touchUpdatedAt({ ...item, x: item.x + delta.x, y: item.y + delta.y })
           : item
       );
+      if (originalFrame) {
+        nextItems = moveFrameChildrenByDelta(nextItems, originalFrame, delta, selection);
+      }
+      draft.items = nextItems;
     });
   },
   applyLiveSelectionDelta: (delta) => {
@@ -251,11 +380,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((state) => ({
       snapshot: {
         ...state.snapshot,
-        items: state.snapshot.items.map((item) =>
-          selection.includes(item.id)
-            ? { ...item, x: item.x + delta.x, y: item.y + delta.y, updatedAt: new Date().toISOString() }
-            : item
-        )
+        items: (() => {
+          const originalFrame =
+            selection.length === 1
+              ? state.snapshot.items.find((item) => item.id === selection[0] && item.type === "frame") ?? null
+              : null;
+          let nextItems = state.snapshot.items.map((item) =>
+            selection.includes(item.id)
+              ? { ...item, x: item.x + delta.x, y: item.y + delta.y, updatedAt: new Date().toISOString() }
+              : item
+          );
+          if (originalFrame) {
+            nextItems = moveFrameChildrenByDelta(nextItems, originalFrame, delta, selection);
+          }
+          return nextItems;
+        })()
       }
     }));
   },
@@ -263,20 +402,41 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((state) => ({
       snapshot: {
         ...state.snapshot,
-        items: state.snapshot.items.map((item) =>
-          item.id === itemId
-            ? {
-                ...item,
-                ...bounds,
-                updatedAt: new Date().toISOString()
-              }
-            : item
-        )
+        items: (() => {
+          const currentItem = state.snapshot.items.find((item) => item.id === itemId);
+          if (!currentItem) return state.snapshot.items;
+          const nextFrameBounds = {
+            x: bounds.x ?? currentItem.x,
+            y: bounds.y ?? currentItem.y,
+            width: bounds.width ?? currentItem.width,
+            height: bounds.height ?? currentItem.height
+          };
+
+          let nextItems = state.snapshot.items.map((item) =>
+            item.id === itemId
+              ? {
+                  ...item,
+                  ...bounds,
+                  updatedAt: new Date().toISOString()
+                }
+              : item
+          );
+
+          if (currentItem.type === "frame") {
+            nextItems = scaleFrameChildren(nextItems, currentItem, nextFrameBounds);
+          }
+
+          return nextItems;
+        })()
       }
     })),
   updateSelectedText: (value) => {
     const itemId = get().selectedItemIds[0];
     if (!itemId) return;
+    get().updateItemText(itemId, value);
+  },
+  updateItemText: (itemId, value) => {
+    const nextValue = value.trim();
     get().commitMutation("Edit content", (draft) => {
       draft.items = draft.items.map((item): Item => {
         if (item.id !== itemId) return item;
@@ -284,17 +444,35 @@ export const useAppStore = create<AppStore>((set, get) => ({
           case "note":
           case "sticky":
           case "title":
-            return touchUpdatedAt({ ...item, content: { text: value } });
+            return touchUpdatedAt({ ...item, content: { text: nextValue || item.content.text } });
           case "checklist":
-            return touchUpdatedAt({ ...item, content: { ...item.content, title: value } });
+            return touchUpdatedAt({
+              ...item,
+              content: { ...item.content, title: nextValue || item.content.title }
+            });
           case "frame":
-            return touchUpdatedAt({ ...item, content: { label: value } });
+            return touchUpdatedAt({
+              ...item,
+              content: { label: nextValue || item.content.label }
+            });
           case "link":
-            return touchUpdatedAt({ ...item, content: { ...item.content, label: value } });
+            return touchUpdatedAt({
+              ...item,
+              content: { ...item.content, label: nextValue || item.content.label }
+            });
           case "pdf":
-            return touchUpdatedAt({ ...item, content: { ...item.content, label: value } });
+            return touchUpdatedAt({
+              ...item,
+              content: { ...item.content, label: nextValue || item.content.label }
+            });
           case "swatch":
-            return touchUpdatedAt({ ...item, content: { ...item.content, label: value } });
+            return touchUpdatedAt({
+              ...item,
+              content: {
+                ...item.content,
+                name: nextValue || item.content.name
+              }
+            });
           case "image":
           default:
             return item;
@@ -319,6 +497,47 @@ export const useAppStore = create<AppStore>((set, get) => ({
       );
     });
   },
+  updateSelectedStyle: (style) => {
+    const selection = get().selectedItemIds;
+    if (!selection.length) return;
+    get().commitMutation("Update item color", (draft) => {
+      draft.items = draft.items.map((item): Item => {
+        if (!selection.includes(item.id)) return item;
+        if (item.type === "swatch" && typeof style.fillColor === "string") {
+          return touchUpdatedAt({
+            ...item,
+            content: {
+              ...item.content,
+              color: style.fillColor,
+              hex: style.fillColor.toUpperCase()
+            },
+            style: {
+              ...item.style,
+              ...style
+            }
+          });
+        }
+
+        if (item.type === "connector" && typeof style.strokeColor === "string") {
+          return touchUpdatedAt({
+            ...item,
+            style: {
+              ...item.style,
+              strokeColor: style.strokeColor
+            }
+          });
+        }
+
+        return touchUpdatedAt({
+          ...item,
+          style: {
+            ...item.style,
+            ...style
+          }
+        });
+      });
+    });
+  },
   updateSelectedOpacity: (opacity) => {
     const selection = get().selectedItemIds;
     if (!selection.length) return;
@@ -332,15 +551,31 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const itemId = get().selectedItemIds[0];
     if (!itemId) return;
     get().commitMutation("Resize item", (draft) => {
-      draft.items = draft.items.map((item) =>
+      const currentItem = draft.items.find((item) => item.id === itemId);
+      if (!currentItem) return;
+
+      const nextBounds = {
+        x: currentItem.x,
+        y: currentItem.y,
+        width: Math.max(size.width, currentItem.type === "frame" ? 220 : 80),
+        height: Math.max(size.height, currentItem.type === "frame" ? 140 : 64)
+      };
+
+      let nextItems = draft.items.map((item) =>
         item.id === itemId
           ? touchUpdatedAt({
               ...item,
-              width: Math.max(size.width, item.type === "frame" ? 220 : 80),
-              height: Math.max(size.height, item.type === "frame" ? 140 : 64)
+              width: nextBounds.width,
+              height: nextBounds.height
             })
           : item
       );
+
+      if (currentItem.type === "frame") {
+        nextItems = scaleFrameChildren(nextItems, currentItem, nextBounds);
+      }
+
+      draft.items = nextItems;
     });
   },
   renameSelection: (value) => {
@@ -431,7 +666,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const selection = get().selectedItemIds;
     if (!selection.length) return;
     get().commitMutation("Delete selection", (draft) => {
-      draft.items = draft.items.filter((item) => !selection.includes(item.id));
+      draft.items = draft.items.filter((item) => {
+        if (selection.includes(item.id)) return false;
+        if (
+          item.type === "connector" &&
+          (selection.includes(item.content.fromItemId) || selection.includes(item.content.toItemId))
+        ) {
+          return false;
+        }
+        return true;
+      });
     });
     set({ selectedItemIds: [] });
   },
@@ -482,6 +726,11 @@ export const selectActiveBoard = (snapshot: AppSnapshot) =>
 
 export const selectBoardItems = (snapshot: AppSnapshot, boardId: string) =>
   snapshot.items.filter((item) => item.boardId === boardId).sort((a, b) => a.zIndex - b.zIndex);
+
+export const selectBoardStrokes = (snapshot: AppSnapshot, boardId: string) =>
+  snapshot.strokes
+    .filter((stroke) => stroke.boardId === boardId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
 export const selectAssetsById = (snapshot: AppSnapshot) =>
   new Map(snapshot.assets.map((asset) => [asset.id, asset]));

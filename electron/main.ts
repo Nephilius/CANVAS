@@ -4,15 +4,26 @@ import { app, BrowserWindow, dialog, globalShortcut, ipcMain } from "electron";
 import { getCrashReportDir, writeCrashReport } from "./crash-logger";
 import { getPatchDialogOptions, installPatchArchive } from "./patcher";
 import { validatePatchArchive } from "./patch-format";
-import { importClipboardImage, importFiles, loadSnapshot, saveSnapshot } from "./storage";
+import {
+  exportSessionFile,
+  importClipboardImage,
+  importFiles,
+  loadSnapshot,
+  openSessionFile,
+  saveSnapshot
+} from "./storage";
 import { configureAutoUpdates } from "./updater";
 import type { AppSnapshot } from "../shared/domain";
 import type { FocusOverlayPayload, PatchProgressState } from "../shared/ipc";
 import { SUPPORTED_IMPORT_EXTENSIONS } from "../shared/imports";
 
 const isDev = !app.isPackaged;
+const getWindowIconPath = () =>
+  isDev
+    ? path.join(process.cwd(), "build", "icons", "icon.png")
+    : path.join(process.resourcesPath, "build", "icons", "icon.png");
 
-let mainWindow: BrowserWindow | null = null;
+const mainWindows = new Set<BrowserWindow>();
 let focusOverlayWindow: BrowserWindow | null = null;
 let focusOverlayClickThrough = false;
 const FOCUS_OVERLAY_SHORTCUT = "CommandOrControl+Shift+X";
@@ -51,6 +62,12 @@ const attachCrashHooks = (win: BrowserWindow) => {
   });
 };
 
+const getPrimaryWindow = () => {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && mainWindows.has(focused)) return focused;
+  return [...mainWindows][mainWindows.size - 1] ?? null;
+};
+
 const createMainWindow = async () => {
   const win = new BrowserWindow({
     width: 1600,
@@ -59,6 +76,7 @@ const createMainWindow = async () => {
     minHeight: 760,
     backgroundColor: "#0c0d0f",
     titleBarStyle: "hiddenInset",
+    icon: getWindowIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -66,15 +84,21 @@ const createMainWindow = async () => {
     }
   });
 
-  mainWindow = win;
+  const anchor = getPrimaryWindow();
+  if (anchor && !anchor.isDestroyed()) {
+    const [x, y] = anchor.getPosition();
+    win.setPosition(x + 28, y + 28);
+  }
+
+  mainWindows.add(win);
   attachCrashHooks(win);
   await win.loadURL(getRendererUrl());
 
   win.on("closed", () => {
-    if (mainWindow === win) {
-      mainWindow = null;
-    }
+    mainWindows.delete(win);
   });
+
+  return win;
 };
 
 const getFocusOverlayWindowState = () => ({
@@ -136,6 +160,7 @@ const openFocusOverlayWindow = async (payload: FocusOverlayPayload) => {
     movable: true,
     skipTaskbar: false,
     autoHideMenuBar: true,
+    icon: getWindowIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -159,7 +184,7 @@ const openFocusOverlayWindow = async (payload: FocusOverlayPayload) => {
       focusOverlayWindow = null;
     }
     focusOverlayClickThrough = false;
-    mainWindow?.focus();
+    getPrimaryWindow()?.focus();
   });
 };
 
@@ -186,19 +211,61 @@ process.on("unhandledRejection", (reason) => {
 app.whenReady().then(async () => {
   ipcMain.handle("app:loadSnapshot", () => loadSnapshot());
   ipcMain.handle("app:saveSnapshot", (_event, snapshot: AppSnapshot) => saveSnapshot(snapshot));
+  ipcMain.handle("app:openNewWindow", async () => {
+    await createMainWindow();
+    return { ok: true };
+  });
   ipcMain.handle("app:importFiles", (_event, paths: string[]) => importFiles(paths));
   ipcMain.handle("app:importClipboardImage", (_event, payload) => importClipboardImage(payload));
   ipcMain.handle("app:openImportDialog", async () => {
     const result = await dialog.showOpenDialog({
-      properties: ["openFile", "openDirectory", "multiSelections"],
+      title: "Import Files",
+      buttonLabel: "Import Selected",
+      properties: ["openFile", "multiSelections"],
       filters: [
         {
           name: "Creative Assets",
           extensions: SUPPORTED_IMPORT_EXTENSIONS.map((extension) => extension.replace(".", ""))
+        },
+        {
+          name: "All Files",
+          extensions: ["*"]
         }
       ]
     });
     return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("app:saveSessionFile", async (_event, snapshot: AppSnapshot) => {
+    const targetWindow = getPrimaryWindow();
+    const result = await dialog.showSaveDialog(targetWindow ?? undefined, {
+      title: "Save Session File",
+      buttonLabel: "Save Session",
+      defaultPath: "canvas-session.json",
+      filters: [
+        { name: "Canvas Studio Session", extensions: ["json"] },
+        { name: "All Files", extensions: ["*"] }
+      ]
+    });
+    if (result.canceled || !result.filePath) {
+      return { filePath: null };
+    }
+    return exportSessionFile(result.filePath, snapshot);
+  });
+  ipcMain.handle("app:openSessionFile", async () => {
+    const targetWindow = getPrimaryWindow();
+    const result = await dialog.showOpenDialog(targetWindow ?? undefined, {
+      title: "Open Session File",
+      buttonLabel: "Open Session",
+      properties: ["openFile"],
+      filters: [
+        { name: "Canvas Studio Session", extensions: ["json"] },
+        { name: "All Files", extensions: ["*"] }
+      ]
+    });
+    if (result.canceled || !result.filePaths[0]) {
+      return null;
+    }
+    return openSessionFile(result.filePaths[0]);
   });
   ipcMain.handle("app:getAppVersion", () => ({
     version: app.getVersion(),
@@ -253,7 +320,7 @@ app.whenReady().then(async () => {
   configureAutoUpdates();
 
   app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (mainWindows.size === 0) {
       await createMainWindow();
     }
   });

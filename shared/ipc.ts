@@ -69,6 +69,16 @@ export interface CrashReportResult {
   path: string;
 }
 
+export interface SessionFileResult {
+  filePath: string | null;
+  savedAt?: string;
+}
+
+export interface OpenSessionResult {
+  filePath: string;
+  snapshot: AppSnapshot;
+}
+
 export interface FocusOverlayPayload {
   src: string;
   label: string;
@@ -83,9 +93,13 @@ export interface FocusOverlayWindowState {
 export interface AppApi {
   loadSnapshot: () => Promise<AppSnapshot>;
   saveSnapshot: (snapshot: AppSnapshot) => Promise<{ savedAt: string }>;
+  openNewWindow: () => Promise<{ ok: boolean }>;
   importFiles: (paths: string[]) => Promise<ImportFilesResult>;
+  getPathsForDroppedFiles: (files: File[]) => string[];
   importClipboardImage: (input: ClipboardImportInput) => Promise<ImportedAsset>;
   openImportDialog: () => Promise<string[]>;
+  saveSessionFile: (snapshot: AppSnapshot) => Promise<SessionFileResult>;
+  openSessionFile: () => Promise<OpenSessionResult | null>;
   getAppVersion: () => Promise<{ version: string; packaged: boolean }>;
   getCrashReportsDirectory: () => Promise<{ path: string }>;
   selectPatchFile: () => Promise<string | null>;

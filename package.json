@@ -1,11 +1,12 @@
 {
   "name": "canvas-studio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "A Milanote + PureRef inspired creative board app for Windows.",
   "main": "dist-electron/electron/main.js",
   "type": "commonjs",
   "scripts": {
+    "generate:icons": "powershell -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
     "clean": "node scripts/clean.mjs",
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
@@ -43,6 +44,16 @@
       "dist-electron/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "build/icons",
+        "to": "build/icons"
+      },
+      {
+        "from": "node_modules/sql.js/dist/sql-wasm.wasm",
+        "to": "sqljs/sql-wasm.wasm"
+      }
+    ],
     "extraMetadata": {
       "main": "dist-electron/electron/main.js"
     },
@@ -50,6 +61,7 @@
       "artifactName": "Canvas-Studio-Portable-${version}.${ext}"
     },
     "win": {
+      "icon": "build/icons/icon.png",
       "signAndEditExecutable": false,
       "target": [
         {

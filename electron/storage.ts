@@ -14,25 +14,40 @@ import {
   type Board,
   type Item,
   type Project,
+  type SketchStroke,
   type Workspace
 } from "../shared/domain";
 import type { ClipboardImportInput, ImportFilesResult, ImportedAsset } from "../shared/ipc";
 
 const DB_FILE = "canvas-studio.sqlite";
+const SESSION_FILE_APP_ID = "canvas-studio";
+const SESSION_FILE_FORMAT = "canvas-session";
+const SESSION_FILE_VERSION = 1;
 
 let SQL: SqlJsStatic | null = null;
 let db: Database | null = null;
 
+const getSqlWasmPath = (file: string) => {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "sqljs", file);
+  }
+
+  return path.join(path.dirname(require.resolve("sql.js/package.json")), "dist", file);
+};
+
 const ensureSql = async () => {
   if (SQL) return SQL;
   SQL = await initSqlJs({
-    locateFile: (file: string) => path.join(process.cwd(), "node_modules", "sql.js", "dist", file)
+    // sql.js needs an explicit wasm location because packaged Electron builds
+    // cannot rely on node_modules existing at process.cwd() runtime paths.
+    locateFile: (file: string) => getSqlWasmPath(file)
   });
   return SQL;
 };
 
 const getDbPath = () => path.join(app.getPath("userData"), DB_FILE);
 const getAssetCacheDir = () => path.join(app.getPath("userData"), "asset-cache");
+const getSessionRestoreDir = () => path.join(app.getPath("userData"), "session-cache");
 
 const writeDbToDisk = () => {
   if (!db) return;
@@ -45,6 +60,7 @@ const ensureSchema = (database: Database) => {
     CREATE TABLE IF NOT EXISTS project (id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS board (id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS item (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS stroke (id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS asset (id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
@@ -93,25 +109,11 @@ const getMeta = (key: string) => {
   return result[0]?.values[0]?.[0] ? String(result[0].values[0][0]) : null;
 };
 
-export const loadSnapshot = async (): Promise<AppSnapshot> => {
-  await getOpenDb();
-  const snapshot: AppSnapshot = {
-    schemaVersion: Number(getMeta("schemaVersion") ?? SCHEMA_VERSION),
-    workspaces: readRows<Workspace>("workspace"),
-    projects: readRows<Project>("project"),
-    boards: readRows<Board>("board"),
-    items: readRows<Item>("item"),
-    assets: readRows<Asset>("asset"),
-    activeWorkspaceId: getMeta("activeWorkspaceId") ?? "",
-    activeProjectId: getMeta("activeProjectId") ?? "",
-    activeBoardId: getMeta("activeBoardId") ?? "",
-    lastOpenedBoardId: getMeta("lastOpenedBoardId") ?? ""
-  };
+const normalizeSnapshot = (snapshot: AppSnapshot): AppSnapshot => {
   if (!snapshot.workspaces.length || !snapshot.projects.length || !snapshot.boards.length) {
-    const seeded = createInitialSnapshot();
-    await saveSnapshot(seeded);
-    return seeded;
+    return createInitialSnapshot();
   }
+
   return {
     ...snapshot,
     schemaVersion: SCHEMA_VERSION,
@@ -128,8 +130,50 @@ export const loadSnapshot = async (): Promise<AppSnapshot> => {
         ...DEFAULT_PERSPECTIVE_GRID,
         ...board.perspectiveGrid
       }
-    }))
+    })),
+    strokes: snapshot.strokes ?? []
   };
+};
+
+interface SessionFileAsset {
+  id: string;
+  originalPath: string;
+  mimeType: string;
+  hash: string;
+  fileName: string;
+  dataBase64: string;
+}
+
+interface SessionFilePackage {
+  appId: string;
+  format: typeof SESSION_FILE_FORMAT;
+  version: typeof SESSION_FILE_VERSION;
+  exportedAt: string;
+  snapshot: AppSnapshot;
+  assets: SessionFileAsset[];
+}
+
+export const loadSnapshot = async (): Promise<AppSnapshot> => {
+  await getOpenDb();
+  const snapshot: AppSnapshot = {
+    schemaVersion: Number(getMeta("schemaVersion") ?? SCHEMA_VERSION),
+    workspaces: readRows<Workspace>("workspace"),
+    projects: readRows<Project>("project"),
+    boards: readRows<Board>("board"),
+    items: readRows<Item>("item"),
+    strokes: readRows<SketchStroke>("stroke"),
+    assets: readRows<Asset>("asset"),
+    activeWorkspaceId: getMeta("activeWorkspaceId") ?? "",
+    activeProjectId: getMeta("activeProjectId") ?? "",
+    activeBoardId: getMeta("activeBoardId") ?? "",
+    lastOpenedBoardId: getMeta("lastOpenedBoardId") ?? ""
+  };
+  if (!snapshot.workspaces.length || !snapshot.projects.length || !snapshot.boards.length) {
+    const seeded = createInitialSnapshot();
+    await saveSnapshot(seeded);
+    return seeded;
+  }
+  return normalizeSnapshot(snapshot);
 };
 
 export const saveSnapshot = async (snapshot: AppSnapshot): Promise<{ savedAt: string }> => {
@@ -138,6 +182,7 @@ export const saveSnapshot = async (snapshot: AppSnapshot): Promise<{ savedAt: st
   upsertEntities("project", snapshot.projects);
   upsertEntities("board", snapshot.boards);
   upsertEntities("item", snapshot.items);
+  upsertEntities("stroke", snapshot.strokes);
   upsertEntities("asset", snapshot.assets);
   setMeta("schemaVersion", String(snapshot.schemaVersion));
   setMeta("activeWorkspaceId", snapshot.activeWorkspaceId);
@@ -243,4 +288,109 @@ export const importClipboardImage = async (
   const tempPath = path.join(getAssetCacheDir(), input.name.endsWith(".png") ? input.name : `${input.name}.png`);
   fs.writeFileSync(tempPath, buffer);
   return copyAssetIntoCache(tempPath, buffer, hashBuffer(buffer));
+};
+
+const buildSessionFilePackage = (snapshot: AppSnapshot): SessionFilePackage => {
+  const assets = snapshot.assets
+    .filter((asset) => fs.existsSync(asset.cachedPath))
+    .map((asset) => {
+      const buffer = fs.readFileSync(asset.cachedPath);
+      return {
+        id: asset.id,
+        originalPath: asset.originalPath,
+        mimeType: asset.mimeType,
+        hash: asset.hash,
+        fileName: path.basename(asset.cachedPath),
+        dataBase64: buffer.toString("base64")
+      };
+    });
+
+  return {
+    appId: SESSION_FILE_APP_ID,
+    format: SESSION_FILE_FORMAT,
+    version: SESSION_FILE_VERSION,
+    exportedAt: new Date().toISOString(),
+    snapshot,
+    assets
+  };
+};
+
+const readSessionFilePackage = (filePath: string): SessionFilePackage => {
+  if (!fs.existsSync(filePath)) {
+    throw new Error("Session file not found.");
+  }
+
+  const raw = fs.readFileSync(filePath, "utf8");
+  const parsed = JSON.parse(raw) as Partial<SessionFilePackage>;
+
+  if (
+    parsed.appId !== SESSION_FILE_APP_ID ||
+    parsed.format !== SESSION_FILE_FORMAT ||
+    parsed.version !== SESSION_FILE_VERSION
+  ) {
+    throw new Error("This session file is not compatible with Canvas Studio.");
+  }
+
+  if (!parsed.snapshot || !Array.isArray(parsed.assets)) {
+    throw new Error("Session file is missing required project data.");
+  }
+
+  return parsed as SessionFilePackage;
+};
+
+const restoreSessionAssets = (sessionFilePath: string, sessionPackage: SessionFilePackage) => {
+  const sessionFolderName = path.basename(sessionFilePath, path.extname(sessionFilePath));
+  const restoreDir = path.join(getSessionRestoreDir(), sessionFolderName);
+  fs.mkdirSync(restoreDir, { recursive: true });
+
+  const restoredPaths = new Map<string, string>();
+  sessionPackage.assets.forEach((asset) => {
+    const ext = path.extname(asset.fileName) || path.extname(asset.originalPath) || ".bin";
+    const outputPath = path.join(restoreDir, `${asset.id}${ext}`);
+    fs.writeFileSync(outputPath, Buffer.from(asset.dataBase64, "base64"));
+    restoredPaths.set(asset.id, outputPath);
+  });
+
+  return sessionPackage.snapshot.assets.map((asset) => {
+    const restoredPath = restoredPaths.get(asset.id);
+    if (!restoredPath) return asset;
+    return {
+      ...asset,
+      cachedPath: restoredPath,
+      thumbnailPath: asset.mimeType.startsWith("image/") ? restoredPath : null,
+      fileSize: fs.statSync(restoredPath).size,
+      updatedAt: new Date().toISOString()
+    };
+  });
+};
+
+export const exportSessionFile = async (
+  filePath: string,
+  snapshot: AppSnapshot
+): Promise<{ savedAt: string; filePath: string }> => {
+  const normalized =
+    filePath.toLowerCase().endsWith(".json") ? filePath : `${filePath}.json`;
+  const sessionPackage = buildSessionFilePackage(snapshot);
+  fs.mkdirSync(path.dirname(normalized), { recursive: true });
+  fs.writeFileSync(normalized, JSON.stringify(sessionPackage, null, 2), "utf8");
+  return {
+    savedAt: new Date().toISOString(),
+    filePath: normalized
+  };
+};
+
+export const openSessionFile = async (
+  filePath: string
+): Promise<{ snapshot: AppSnapshot; filePath: string }> => {
+  const sessionPackage = readSessionFilePackage(filePath);
+  const restoredAssets = restoreSessionAssets(filePath, sessionPackage);
+  const restoredSnapshot = normalizeSnapshot({
+    ...sessionPackage.snapshot,
+    assets: restoredAssets
+  });
+  await saveSnapshot(restoredSnapshot);
+  return {
+    snapshot: restoredSnapshot,
+    filePath
+  };
 };
